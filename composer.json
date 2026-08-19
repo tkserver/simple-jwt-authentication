@@ -1,11 +1,21 @@
 {
     "name": "jonathan-dejong/simple-jwt-authentication",
     "description": "Extends the WP REST API using JSON Web Tokens Authentication as an authentication method",
-    "config": {
-        "vendor-dir": "includes/vendor"
-    },
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
     "require": {
-        "firebase/php-jwt": "^3.0",
-		"donatj/phpuseragentparser": "*"
-    }
+        "php": ">=8.2",
+        "firebase/php-jwt": "^7.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "SimpleJwtAuth\\": "src/"
+        }
+    },
+    "config": {
+        "vendor-dir": "includes/vendor",
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
 }
