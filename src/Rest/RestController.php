@@ -27,7 +27,7 @@ final class RestController
         add_action('rest_api_init', fn() => $this->registerRoutes());
         add_action('rest_api_init', fn() => $this->addCorsSupport());
         add_filter('determine_current_user', fn($user) => $this->determineCurrentUser($user), 10);
-        add_filter('rest_pre_dispatch', fn($request, $server) => $this->preDispatch($request, $server), 10, 2);
+        add_filter('rest_pre_dispatch', fn($pre) => $this->preDispatch($pre), 10);
     }
 
     private function registerRoutes(): void
@@ -85,34 +85,54 @@ final class RestController
             return $user;
         }
 
-        if (str_contains($requestUri, 'token/validate')) {
+        // Skip our own endpoints that use username/password instead of Bearer.
+        $tokenGeneratePath = $this->namespace . '/token';
+        $tokenResetPath    = $this->namespace . '/token/resetpassword';
+        $tokenValidatePath = $this->namespace . '/token/validate';
+
+        if (
+            preg_match('#' . preg_quote($tokenGeneratePath, '#') . '(\?.*)?$#', $requestUri)
+            || str_contains($requestUri, $tokenValidatePath)
+            || str_contains($requestUri, $tokenResetPath)
+        ) {
+            return $user;
+        }
+
+        // If no Authorization header at all, user isn't trying to use JWT.
+        if ($this->getAuthHeader() === null) {
             return $user;
         }
 
         $token = $this->tokenService->validateToken(forMiddleware: true);
 
         if (is_wp_error($token)) {
-            if ($token->get_error_code() !== 'jwt_auth_no_auth_header') {
-                $this->tokenService->setJwtError($token);
-            }
+            $this->tokenService->setJwtError($token);
             return $user;
         }
 
         return (int) $token->data->user->id;
     }
 
+    private function getAuthHeader(): ?string
+    {
+        $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+        if (empty($auth)) {
+            $auth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        }
+        return $auth !== '' ? $auth : null;
+    }
+
     /**
      * Surface stored JWT errors before the REST server dispatches the request.
      *
-     * @param WP_REST_Request $request
-     * @param \WP_REST_Server $server
+     * @param mixed $pre The pre-dispatch value (null by default).
      */
-    public function preDispatch(WP_REST_Request $request, \WP_REST_Server $server): WP_REST_Request|\WP_Error
+    public function preDispatch(mixed $pre): mixed
     {
         $jwtError = $this->tokenService->getJwtError();
         if ($jwtError !== null) {
             return $jwtError;
         }
-        return $request;
+        return $pre;
     }
 }

@@ -232,13 +232,11 @@ final class TokenService
 
     private function getAuthHeader(): ?string
     {
-        $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
-
-        if ($auth === null) {
-            $auth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
+        $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+        if (empty($auth)) {
+            $auth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
         }
-
-        return $auth !== null ? $auth : null;
+        return $auth !== '' ? $auth : null;
     }
 
     private function storeTokenMetadata(int $userId, string $uuid, int $issuedAt, int $expires): void
