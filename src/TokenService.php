@@ -21,6 +21,11 @@ final class TokenService
     private const ALGORITHM = 'HS256';
     private const TOKEN_LIFETIME_SECONDS = DAY_IN_SECONDS * 183;
 
+    private const RATE_LIMIT_LOGIN_MAX = 10;
+    private const RATE_LIMIT_LOGIN_WINDOW = 15 * MINUTE_IN_SECONDS;
+    private const RATE_LIMIT_PASSWORD_RESET_MAX = 5;
+    private const RATE_LIMIT_PASSWORD_RESET_WINDOW = 15 * MINUTE_IN_SECONDS;
+
     private ?WP_Error $jwtError = null;
 
     /**
@@ -42,7 +47,7 @@ final class TokenService
 
         $payload = [
             'uuid'  => $uuid,
-            'iss'   => get_bloginfo('url'),
+            'iss'   => apply_filters('jwt_auth_token_iss', get_bloginfo('url')),
             'iat'   => $issuedAt,
             'nbf'   => $notBefore,
             'exp'   => $expire,
@@ -116,7 +121,7 @@ final class TokenService
             return new WP_Error('jwt_auth_invalid_token', $e->getMessage(), ['status' => 401]);
         }
 
-        if (!property_exists($token, 'iss') || get_bloginfo('url') !== $token->iss) {
+        if (!property_exists($token, 'iss') || apply_filters('jwt_auth_token_iss', get_bloginfo('url')) !== $token->iss) {
             return new WP_Error(
                 'jwt_auth_bad_iss',
                 __('The issuer does not match this server.', 'simple-jwt-authentication'),
@@ -265,19 +270,100 @@ final class TokenService
             return false;
         }
 
-        foreach ($tokens as $key => $tokenData) {
-            if (hash_equals($tokenData['uuid'], $tokenUuid)) {
-                if ($updateLastUsed) {
-                    $tokens[$key]['last_used'] = time();
-                    $tokens[$key]['ip']        = $this->getClientIp();
-                    $tokens[$key]['ua']        = $_SERVER['HTTP_USER_AGENT'] ?? '';
-                    update_user_meta($userId, 'jwt_data', $tokens);
-                }
-                return true;
+        // `last_used` is only worth re-writing periodically; the stored value is
+        // "approximate" within this window to avoid a user-meta write per request.
+        $updateInterval = (int) apply_filters('jwt_auth_last_used_update_interval', HOUR_IN_SECONDS);
+
+        $now       = time();
+        $valid     = false;
+        $changed   = false;
+        $filtered  = [];
+
+        foreach ($tokens as $tokenData) {
+            // Prune expired entries while we already have the list in memory.
+            if ((int) ($tokenData['expires'] ?? 0) < $now) {
+                continue;
             }
+
+            if (hash_equals((string) ($tokenData['uuid'] ?? ''), $tokenUuid)) {
+                $valid = true;
+
+                if ($updateLastUsed) {
+                    $lastUsed = (int) ($tokenData['last_used'] ?? 0);
+                    if ($now - $lastUsed >= $updateInterval) {
+                        $tokenData['last_used'] = $now;
+                        $tokenData['ip']        = $this->getClientIp();
+                        $tokenData['ua']        = $_SERVER['HTTP_USER_AGENT'] ?? '';
+                        $changed                = true;
+                    }
+                }
+            }
+
+            $filtered[] = $tokenData;
         }
 
-        return false;
+        if ($changed || count($filtered) < count($tokens)) {
+            update_user_meta($userId, 'jwt_data', $filtered);
+        }
+
+        return $valid;
+    }
+
+    /**
+     * Whether the current IP has exhausted the rate-limit budget for a bucket.
+     */
+    public function isRateLimited(string $bucket, int $maxAttempts, int $windowSeconds): bool
+    {
+        return $this->getRateLimitCount($bucket) >= $maxAttempts;
+    }
+
+    /**
+     * Record one rate-limit hit for the current IP (e.g. a failed login).
+     */
+    public function registerRateLimitHit(string $bucket, int $windowSeconds): void
+    {
+        $key = $this->rateLimitKey($bucket);
+        set_transient($key, $this->getRateLimitCount($bucket) + 1, $windowSeconds);
+    }
+
+    /**
+     * Clear the rate-limit counter (e.g. after a successful login).
+     */
+    public function resetRateLimit(string $bucket): void
+    {
+        delete_transient($this->rateLimitKey($bucket));
+    }
+
+    /**
+     * Login rate limit: filterable max attempts / window per IP.
+     */
+    public function getLoginRateLimit(): array
+    {
+        $max    = (int) apply_filters('jwt_auth_login_rate_limit_max', self::RATE_LIMIT_LOGIN_MAX);
+        $window = (int) apply_filters('jwt_auth_login_rate_limit_window', self::RATE_LIMIT_LOGIN_WINDOW);
+
+        return [max(1, $max), max(10, $window)];
+    }
+
+    /**
+     * Password reset rate limit: filterable max emails / window per IP.
+     */
+    public function getPasswordResetRateLimit(): array
+    {
+        $max    = (int) apply_filters('jwt_auth_reset_rate_limit_max', self::RATE_LIMIT_PASSWORD_RESET_MAX);
+        $window = (int) apply_filters('jwt_auth_reset_rate_limit_window', self::RATE_LIMIT_PASSWORD_RESET_WINDOW);
+
+        return [max(1, $max), max(10, $window)];
+    }
+
+    private function getRateLimitCount(string $bucket): int
+    {
+        return (int) get_transient($this->rateLimitKey($bucket));
+    }
+
+    private function rateLimitKey(string $bucket): string
+    {
+        return 'sja_rl_' . $bucket . '_' . md5(strtolower($this->getClientIp()));
     }
 
     private function getClientIp(): string

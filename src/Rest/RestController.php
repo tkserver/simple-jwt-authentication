@@ -14,9 +14,11 @@ use WP_REST_Response;
  */
 final class RestController
 {
-    private string $namespace;
-    private TokenService $tokenService;
-    private TokenEndpoint $endpoint;
+    private const CORS_MAX_AGE = 86400;
+
+    private readonly string $namespace;
+    private readonly TokenService $tokenService;
+    private readonly TokenEndpoint $endpoint;
 
     public function __construct(string $namespace, TokenService $tokenService, TokenEndpoint $endpoint)
     {
@@ -26,6 +28,7 @@ final class RestController
 
         add_action('rest_api_init', fn() => $this->registerRoutes());
         add_action('rest_api_init', fn() => $this->addCorsSupport());
+        add_action('init', fn() => $this->handleCorsPreflight());
         add_filter('determine_current_user', fn($user) => $this->determineCurrentUser($user), 10);
         add_filter('rest_pre_dispatch', fn($pre) => $this->preDispatch($pre), 10);
     }
@@ -66,8 +69,43 @@ final class RestController
             return;
         }
 
-        $headers = apply_filters('jwt_auth_cors_allow_headers', 'Access-Control-Allow-Headers, Content-Type, Authorization');
+        $headers = apply_filters('jwt_auth_cors_allow_headers', 'Content-Type, Authorization');
         header(sprintf('Access-Control-Allow-Headers: %s', $headers));
+
+        $origin = apply_filters('jwt_auth_cors_allow_origin', '*');
+        header(sprintf('Access-Control-Allow-Origin: %s', $origin));
+    }
+
+    /**
+     * Answer CORS preflight (OPTIONS) requests against the REST API and stop.
+     *
+     * Runs on `init` so the response is sent before WP routing; non-REST
+     * OPTIONS requests fall through untouched.
+     */
+    public function handleCorsPreflight(): void
+    {
+        if (!Config::isCorsEnabled()) {
+            return;
+        }
+
+        if (strtoupper($_SERVER['REQUEST_METHOD'] ?? '') !== 'OPTIONS') {
+            return;
+        }
+
+        $requestUri = $_SERVER['REQUEST_URI'] ?? '';
+        if (!str_contains($requestUri, '/' . rest_get_url_prefix())) {
+            return;
+        }
+
+        $headers = apply_filters('jwt_auth_cors_allow_headers', 'Content-Type, Authorization');
+        $origin  = apply_filters('jwt_auth_cors_allow_origin', '*');
+
+        status_header(204);
+        header(sprintf('Access-Control-Allow-Origin: %s', $origin));
+        header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+        header(sprintf('Access-Control-Allow-Headers: %s', $headers));
+        header(sprintf('Access-Control-Max-Age: %d', self::CORS_MAX_AGE));
+        wp_die();
     }
 
     /**
@@ -86,15 +124,7 @@ final class RestController
         }
 
         // Skip our own endpoints that use username/password instead of Bearer.
-        $tokenGeneratePath = $this->namespace . '/token';
-        $tokenResetPath    = $this->namespace . '/token/resetpassword';
-        $tokenValidatePath = $this->namespace . '/token/validate';
-
-        if (
-            preg_match('#' . preg_quote($tokenGeneratePath, '#') . '(\?.*)?$#', $requestUri)
-            || str_contains($requestUri, $tokenValidatePath)
-            || str_contains($requestUri, $tokenResetPath)
-        ) {
+        if ($this->isBypassRoute($requestUri)) {
             return $user;
         }
 
@@ -111,6 +141,22 @@ final class RestController
         }
 
         return (int) $token->data->user->id;
+    }
+
+    /**
+     * Exact path-suffix match for the endpoints that authenticate with
+     * username/password (never Bearer). Avoids `str_contains`, which would
+     * also match e.g. `.../token/validate/custom`. Suffix (not exact) match
+     * because the path is prefixed with the REST URL prefix (`/wp-json`).
+     */
+    private function isBypassRoute(string $requestUri): bool
+    {
+        $path = (string) parse_url($requestUri, PHP_URL_PATH);
+        $base = '/' . $this->namespace . '/token';
+
+        return str_ends_with($path, $base)
+            || str_ends_with($path, $base . '/validate')
+            || str_ends_with($path, $base . '/resetpassword');
     }
 
     private function getAuthHeader(): ?string

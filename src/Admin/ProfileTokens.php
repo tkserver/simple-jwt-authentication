@@ -12,7 +12,7 @@ use WP_User;
  */
 final class ProfileTokens
 {
-    private TokenService $tokenService;
+    private readonly TokenService $tokenService;
 
     public function __construct(TokenService $tokenService)
     {

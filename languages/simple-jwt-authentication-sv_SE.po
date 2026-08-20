@@ -39,16 +39,16 @@ msgstr ""
 "autentisera användare."
 
 #. URI of the plugin
-msgid "http://github.com/jonathan-dejong/simple-jwt-authentication"
-msgstr "http://github.com/jonathan-dejong/simple-jwt-authentication"
+msgid "https://github.com/tkserver/simple-jwt-authentication"
+msgstr "https://github.com/tkserver/simple-jwt-authentication"
 
 #. Author of the plugin
-msgid "Jonathan de Jong"
-msgstr "Jonathan de Jong"
+msgid "Tony Korologos"
+msgstr "Tony Korologos"
 
 #. Author URI of the plugin
-msgid "http://github.com/jonathan-dejong"
-msgstr "https://github.com/jonathan-dejong"
+msgid "https://github.com/tkserver"
+msgstr "https://github.com/tkserver"
 
 #: includes/class-simple-jwt-authentication-api.php:16
 #: includes/class-simple-jwt-authentication-rest.php:310

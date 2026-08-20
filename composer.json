@@ -1,8 +1,19 @@
 {
-    "name": "jonathan-dejong/simple-jwt-authentication",
+    "name": "tkserver/simple-jwt-authentication",
     "description": "Extends the WP REST API using JSON Web Tokens Authentication as an authentication method",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Tony Korologos",
+            "homepage": "https://github.com/tkserver"
+        },
+        {
+            "name": "Jonathan de Jong",
+            "homepage": "https://github.com/jonathan-dejong",
+            "role": "Original author"
+        }
+    ],
     "require": {
         "php": ">=8.2",
         "firebase/php-jwt": "^7.0"

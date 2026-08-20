@@ -15,7 +15,7 @@ use WP_REST_Response;
  */
 final class TokenEndpoint
 {
-    private TokenService $tokenService;
+    private readonly TokenService $tokenService;
 
     public function __construct(TokenService $tokenService)
     {
@@ -35,12 +35,27 @@ final class TokenEndpoint
             );
         }
 
+        [$maxAttempts, $window] = $this->tokenService->getLoginRateLimit();
+
+        if ($this->tokenService->isRateLimited('login', $maxAttempts, $window)) {
+            $response = $this->errorResponse(
+                'jwt_auth_too_many_attempts',
+                __('Too many login attempts. Please try again later.', 'simple-jwt-authentication'),
+                429
+            );
+            $response->header('Retry-After', (string) $window);
+
+            return $response;
+        }
+
         $username = (string) $request->get_param('username');
         $password = (string) $request->get_param('password');
 
         $user = wp_authenticate($username, $password);
 
         if (is_wp_error($user)) {
+            // Count failures per IP; the counter resets on a successful login.
+            $this->tokenService->registerRateLimitHit('login', $window);
             $code = $user->get_error_code();
             return $this->errorResponse(
                 "[jwt_auth] $code",
@@ -48,6 +63,8 @@ final class TokenEndpoint
                 401
             );
         }
+
+        $this->tokenService->resetRateLimit('login');
 
         try {
             $data = $this->tokenService->generateToken($user);
@@ -97,29 +114,47 @@ final class TokenEndpoint
 
     /**
      * POST /token/resetpassword — send a password reset email.
+     *
+     * Always returns the same generic 200 response regardless of whether the
+     * account exists or reset is allowed, mirroring WP core's
+     * `wp-login.php?action=lostpassword` behavior to prevent username
+     * enumeration and email-sending abuse.
      */
     public function resetPassword(WP_REST_Request $request): WP_REST_Response
     {
-        $username = (string) $request->get_param('username');
+        $username = trim((string) $request->get_param('username'));
 
-        if ($username === '') {
-            return $this->errorResponse(
-                'jwt_auth_invalid_username',
-                __('Username or email not specified.', 'simple-jwt-authentication'),
-                400
-            );
+        if ($username !== '') {
+            $this->attemptPasswordReset($username);
         }
 
+        return $this->resetPasswordSuccess();
+    }
+
+    /**
+     * POST /token/resetpassword — always-200 response shared by all outcomes.
+     */
+    private function resetPasswordSuccess(): WP_REST_Response
+    {
+        return new WP_REST_Response([
+            'code'    => 'jwt_auth_password_reset',
+            'message' => __(
+                'If the username or email address exists on this site, a password reset link has been sent.',
+                'simple-jwt-authentication'
+            ),
+            'data'    => ['status' => 200],
+        ], 200);
+    }
+
+    private function attemptPasswordReset(string $username): void
+    {
         $user = str_contains($username, '@')
-            ? get_user_by('email', trim($username))
-            : get_user_by('login', trim($username));
+            ? get_user_by('email', $username)
+            : get_user_by('login', $username);
 
         if (!$user) {
-            return $this->errorResponse(
-                'jwt_auth_invalid_username',
-                __('Invalid username.', 'simple-jwt-authentication'),
-                400
-            );
+            // No user: do nothing, and do not fire the lost-password actions.
+            return;
         }
 
         $userLogin = $user->user_login;
@@ -129,13 +164,15 @@ final class TokenEndpoint
         do_action('retrieve_password', $userLogin);
 
         $allowed = apply_filters('allow_password_reset', true, $user->ID);
-
         if (!$allowed || is_wp_error($allowed)) {
-            return $this->errorResponse(
-                'jwt_auth_reset_password_not_allowed',
-                __('Resetting password is not allowed.', 'simple-jwt-authentication'),
-                403
-            );
+            return;
+        }
+
+        // Throttle actual email sends per IP. When over budget we silently
+        // skip the send (the caller still gets the uniform success response).
+        [$maxEmails, $window] = $this->tokenService->getPasswordResetRateLimit();
+        if ($this->tokenService->isRateLimited('password_reset', $maxEmails, $window)) {
+            return;
         }
 
         $key = $this->generateOrGetResetKey($userLogin);
@@ -157,18 +194,10 @@ final class TokenEndpoint
         $message = apply_filters('retrieve_password_message', $message, $key);
 
         if (!$message || !wp_mail($userEmail, $title, $message)) {
-            return $this->errorResponse(
-                'jwt_auth_email_send_failed',
-                __('The email could not be sent.', 'simple-jwt-authentication'),
-                500
-            );
+            return;
         }
 
-        return new WP_REST_Response([
-            'code'    => 'jwt_auth_password_reset',
-            'message' => __('An email for selecting a new password has been sent.', 'simple-jwt-authentication'),
-            'data'    => ['status' => 200],
-        ], 200);
+        $this->tokenService->registerRateLimitHit('password_reset', $window);
     }
 
     private function generateOrGetResetKey(string $userLogin): string

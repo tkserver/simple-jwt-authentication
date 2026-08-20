@@ -193,13 +193,13 @@ msgid ""
 msgstr ""
 
 #. URI of the plugin
-msgid "http://github.com/jonathan-dejong/simple-jwt-authentication"
+msgid "https://github.com/tkserver/simple-jwt-authentication"
 msgstr ""
 
 #. Author of the plugin
-msgid "Jonathan de Jong"
+msgid "Tony Korologos"
 msgstr ""
 
 #. Author URI of the plugin
-msgid "http://github.com/jonathan-dejong"
+msgid "https://github.com/tkserver"
 msgstr ""

@@ -14,12 +14,12 @@ use SimpleJwtAuth\Rest\TokenEndpoint;
  */
 final class Plugin
 {
-    public const VERSION = '2.0.0';
+    public const VERSION = '2.0.1';
     public const NAME    = 'simple-jwt-authentication';
 
-    private TokenService $tokenService;
-    private RestController $restController;
-    private TokenEndpoint $tokenEndpoint;
+    private readonly TokenService $tokenService;
+    private readonly RestController $restController;
+    private readonly TokenEndpoint $tokenEndpoint;
 
     public function __construct()
     {

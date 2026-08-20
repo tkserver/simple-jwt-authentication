@@ -2,6 +2,8 @@
 
 Extends the WP REST API using JSON Web Tokens (JWT) as an authentication method, with support for token revocation and password reset.
 
+> **Fork** of [Simple JWT Authentication](https://github.com/jonathan-dejong/simple-jwt-authentication), originally created by Jonathan de Jong.
+
 [Documentation](https://github.com/jonathan-dejong/simple-jwt-authentication/wiki/Documentation)
 
 ## Requirements
@@ -64,6 +66,28 @@ src/
 Namespace: `SimpleJwtAuth\` (PSR-4, autoloaded via Composer).
 
 ## Changelog
+
+### 2.0.1
+- Security: `/token/resetpassword` now returns a single generic response for all
+  outcomes (no username enumeration), and only fires core lost-password actions
+  for existing users
+- Security: per-IP rate limiting on `/token` (failed logins, 429 + `Retry-After`)
+  and on `/token/resetpassword` (email sends); filterable via
+  `jwt_auth_login_rate_limit_max` / `_window` and `jwt_auth_reset_rate_limit_max` /
+  `_window`
+- Security: functional CORS — `Access-Control-Allow-Origin` (filter
+  `jwt_auth_cors_allow_origin`) plus `OPTIONS` preflight handling (204,
+  `Access-Control-Allow-Methods`, `Access-Control-Max-Age`); corrected default
+  `Access-Control-Allow-Headers`
+- Performance: `jwt_data` user meta is no longer rewritten on every authenticated
+  request — `last_used` updates hourly (filter `jwt_auth_last_used_update_interval`)
+  and only when something changed
+- Data: expired token entries are auto-pruned during verification
+- Fix: `Config::parseBool()` for string CORS constants (`'false'` was cast to `true`)
+- Fix: auth-middleware bypass routes now match exact paths only
+- `uninstall.php` removes token metadata in a single query
+- Actually uses `readonly` properties (as documented)
+- New filter: `jwt_auth_token_iss` to pin the token issuer
 
 ### 2.0.0
 - **Breaking:** Requires PHP 8.2+ and WordPress 6.4+

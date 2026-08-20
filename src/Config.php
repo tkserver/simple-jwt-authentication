@@ -38,10 +38,25 @@ final class Config
     public static function isCorsEnabled(): bool
     {
         if (defined(self::CORS_ENABLE_CONST)) {
-            return (bool) constant(self::CORS_ENABLE_CONST);
+            return self::parseBool(constant(self::CORS_ENABLE_CONST));
         }
         $settings = self::getSettings();
-        return (bool) ($settings['enable_cors'] ?? false);
+        return self::parseBool($settings['enable_cors'] ?? false);
+    }
+
+    /**
+     * Coerce a setting/constant value to a bool. Handles string forms like
+     * 'false', '0', 'off' that a bare (bool) cast would treat as true.
+     */
+    public static function parseBool(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_string($value)) {
+            return !in_array(strtolower($value), ['0', 'false', 'no', 'off', ''], true);
+        }
+        return (bool) $value;
     }
 
     public static function isGlobalDefined(string $constName): bool
