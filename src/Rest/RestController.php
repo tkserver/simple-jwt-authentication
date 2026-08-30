@@ -20,6 +20,12 @@ final class RestController
     private readonly TokenService $tokenService;
     private readonly TokenEndpoint $endpoint;
 
+    /**
+     * Guards against re-entry into determine_current_user while validating a JWT.
+     * Nested wp_get_current_user() calls (e.g. via __()/locale) must not recurse.
+     */
+    private bool $determiningUser = false;
+
     public function __construct(string $namespace, TokenService $tokenService, TokenEndpoint $endpoint)
     {
         $this->namespace    = $namespace;
@@ -61,11 +67,28 @@ final class RestController
                 'username' => ['required' => true, 'type' => 'string'],
             ],
         ]);
+
+        register_rest_route($this->namespace, '/token/resetpassword/complete', [
+            'methods'  => 'POST',
+            'callback' => fn(WP_REST_Request $request) => $this->endpoint->completeResetPassword($request),
+            'args'     => [
+                'key'          => ['required' => true, 'type' => 'string'],
+                'login'        => ['required' => true, 'type' => 'string'],
+                'new_password' => ['required' => true, 'type' => 'string'],
+            ],
+        ]);
     }
 
     private function addCorsSupport(): void
     {
         if (!Config::isCorsEnabled()) {
+            return;
+        }
+
+        // Scoped to this plugin's own namespace so other plugins' REST
+        // routes on the same site don't inherit these headers.
+        $requestUri = $_SERVER['REQUEST_URI'] ?? '';
+        if (!str_contains($requestUri, '/' . $this->namespace)) {
             return;
         }
 
@@ -93,7 +116,7 @@ final class RestController
         }
 
         $requestUri = $_SERVER['REQUEST_URI'] ?? '';
-        if (!str_contains($requestUri, '/' . rest_get_url_prefix())) {
+        if (!str_contains($requestUri, '/' . $this->namespace)) {
             return;
         }
 
@@ -116,47 +139,123 @@ final class RestController
      */
     public function determineCurrentUser(int|false $user): int|false
     {
-        $restPrefix = rest_get_url_prefix();
-        $requestUri = $_SERVER['REQUEST_URI'] ?? '';
-
-        if (!str_contains($requestUri, $restPrefix)) {
+        // Already inside validateToken for this request — never re-enter.
+        // Without this, anything that touches current-user state (locale via
+        // __(), capability checks, etc.) infinite-loops until OOM.
+        if ($this->determiningUser) {
             return $user;
         }
 
-        // Skip our own endpoints that use username/password instead of Bearer.
+        $requestUri = $_SERVER['REQUEST_URI'] ?? '';
+
+        // REST request = pretty `/wp-json/...` OR non-pretty `?rest_route=/...`.
+        // Checking only the pretty prefix misses index.php?rest_route= URLs and
+        // silently drops Bearer auth (rest_not_logged_in) on those installs.
+        if (!$this->isRestRequest($requestUri)) {
+            return $user;
+        }
+
+        // Skip endpoints that never use Bearer auth (and token/validate, which
+        // authenticates itself via its callback to avoid double validation).
         if ($this->isBypassRoute($requestUri)) {
             return $user;
         }
 
         // If no Authorization header at all, user isn't trying to use JWT.
+        // Leave any earlier cookie/app-password user in place.
         if ($this->getAuthHeader() === null) {
             return $user;
         }
 
-        $token = $this->tokenService->validateToken(forMiddleware: true);
+        $this->determiningUser = true;
+        try {
+            $token = $this->tokenService->validateToken(forMiddleware: true);
+        } finally {
+            $this->determiningUser = false;
+        }
 
         if (is_wp_error($token)) {
             $this->tokenService->setJwtError($token);
             return $user;
         }
 
+        // Valid Bearer takes precedence over a cookie user when both are present.
         return (int) $token->data->user->id;
     }
 
     /**
-     * Exact path-suffix match for the endpoints that authenticate with
-     * username/password (never Bearer). Avoids `str_contains`, which would
-     * also match e.g. `.../token/validate/custom`. Suffix (not exact) match
-     * because the path is prefixed with the REST URL prefix (`/wp-json`).
+     * Whether the current REQUEST_URI targets the REST API.
+     */
+    private function isRestRequest(string $requestUri): bool
+    {
+        $restPrefix = rest_get_url_prefix();
+        if ($restPrefix !== '' && str_contains($requestUri, $restPrefix)) {
+            return true;
+        }
+
+        // Non-pretty permalinks: /index.php?rest_route=/wp/v2/...
+        $query = (string) parse_url($requestUri, PHP_URL_QUERY);
+        if ($query === '') {
+            return false;
+        }
+
+        parse_str($query, $params);
+        return !empty($params['rest_route']) && is_string($params['rest_route']);
+    }
+
+    /**
+     * Exact path-suffix match for endpoints that must not run JWT middleware.
+     *
+     * - /token, /token/resetpassword, /token/resetpassword/complete: username/password
+     *   (or reset key) auth — never Bearer.
+     * - /token/validate: validates the Bearer itself in the callback; running middleware
+     *   first would double-decode and is a common double-call hazard.
+     *
+     * Handles both pretty permalinks (`/wp-json/.../token`) and the
+     * `?rest_route=/.../token` form (index.php / non-pretty permalinks).
      */
     private function isBypassRoute(string $requestUri): bool
     {
-        $path = (string) parse_url($requestUri, PHP_URL_PATH);
+        $restPath = $this->extractRestPath($requestUri);
+        if ($restPath === null) {
+            return false;
+        }
+
         $base = '/' . $this->namespace . '/token';
 
-        return str_ends_with($path, $base)
-            || str_ends_with($path, $base . '/validate')
-            || str_ends_with($path, $base . '/resetpassword');
+        return $restPath === $base
+            || $restPath === $base . '/validate'
+            || $restPath === $base . '/resetpassword'
+            || $restPath === $base . '/resetpassword/complete';
+    }
+
+    /**
+     * Normalize the REST route path from REQUEST_URI.
+     *
+     * @return string|null Path like `/simple-jwt-authentication/v1/token`, or null if not a REST request.
+     */
+    private function extractRestPath(string $requestUri): ?string
+    {
+        $path  = (string) parse_url($requestUri, PHP_URL_PATH);
+        $query = (string) parse_url($requestUri, PHP_URL_QUERY);
+
+        // Non-pretty: /index.php?rest_route=/ns/v1/token
+        if ($query !== '') {
+            parse_str($query, $params);
+            if (!empty($params['rest_route']) && is_string($params['rest_route'])) {
+                return untrailingslashit('/' . ltrim($params['rest_route'], '/'));
+            }
+        }
+
+        $restPrefix = '/' . trim(rest_get_url_prefix(), '/');
+        $pos        = strpos($path, $restPrefix . '/');
+        if ($pos === false) {
+            // Exact prefix with nothing after (rare) — not a route we care about.
+            return null;
+        }
+
+        $restPath = substr($path, $pos + strlen($restPrefix));
+        return untrailingslashit($restPath === '' ? '/' : $restPath);
     }
 
     private function getAuthHeader(): ?string
@@ -171,14 +270,40 @@ final class RestController
     /**
      * Surface stored JWT errors before the REST server dispatches the request.
      *
+     * Translation happens here (request already past determine_current_user),
+     * not inside TokenService::validateToken().
+     *
      * @param mixed $pre The pre-dispatch value (null by default).
      */
     public function preDispatch(mixed $pre): mixed
     {
         $jwtError = $this->tokenService->getJwtError();
-        if ($jwtError !== null) {
-            return $jwtError;
+        if ($jwtError === null) {
+            return $pre;
         }
-        return $pre;
+
+        return $this->translateJwtError($jwtError);
+    }
+
+    /**
+     * Localize JWT error strings that were intentionally left untranslated
+     * during determine_current_user to avoid locale/user recursion.
+     */
+    private function translateJwtError(\WP_Error $error): \WP_Error
+    {
+        $code = $error->get_error_code();
+        $data = $error->get_error_data();
+
+        $message = match ($code) {
+            'jwt_auth_no_auth_header' => __('Authorization header not found.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_auth_header' => __('Authorization header malformed.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_config' => __('JWT is not configured properly. The key is missing.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_iss' => __('The issuer does not match this server.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_request' => __('User ID not found in the token.', 'simple-jwt-authentication'),
+            'jwt_auth_token_revoked' => __('Token has been revoked.', 'simple-jwt-authentication'),
+            default => $error->get_error_message(),
+        };
+
+        return new \WP_Error($code, $message, $data);
     }
 }

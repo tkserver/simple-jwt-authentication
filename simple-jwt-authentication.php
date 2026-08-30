@@ -4,7 +4,7 @@
  * Plugin Name: Simple JWT Authentication
  * Plugin URI:  https://github.com/tkserver/simple-jwt-authentication
  * Description: Extends the WP REST API using JSON Web Tokens Authentication as an authentication method.
- * Version:     2.0.1
+ * Version:     2.1.1
  * Requires at least: 6.4
  * Requires PHP: 8.2
  * Author:      Tony Korologos

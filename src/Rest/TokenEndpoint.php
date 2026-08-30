@@ -20,6 +20,13 @@ final class TokenEndpoint
     public function __construct(TokenService $tokenService)
     {
         $this->tokenService = $tokenService;
+
+        // Only override core's reset-key expiration when the admin has set a
+        // non-zero value; 0 defers to core's own default (24h as of WP 5.7+).
+        add_filter('password_reset_expiration', function (int $default): int {
+            $configured = Config::getResetKeyMaxAge();
+            return $configured > 0 ? $configured : $default;
+        });
     }
 
     /**
@@ -83,11 +90,7 @@ final class TokenEndpoint
         $token = $this->tokenService->validateToken();
 
         if (is_wp_error($token)) {
-            return $this->errorResponse(
-                $token->get_error_code(),
-                $token->get_error_message(),
-                $token->get_error_data()['status'] ?? 401
-            );
+            return $this->errorFromJwt($token);
         }
 
         return new WP_REST_Response([
@@ -160,8 +163,9 @@ final class TokenEndpoint
         $userLogin = $user->user_login;
         $userEmail = $user->user_email;
 
+        // Fires before the WP core check/hooks below; mirrors core's own
+        // lostpassword_post signal that a reset was requested for this user.
         do_action('lostpassword_post');
-        do_action('retrieve_password', $userLogin);
 
         $allowed = apply_filters('allow_password_reset', true, $user->ID);
         if (!$allowed || is_wp_error($allowed)) {
@@ -175,14 +179,31 @@ final class TokenEndpoint
             return;
         }
 
-        $key = $this->generateOrGetResetKey($userLogin);
+        // Always issue a fresh key: get_password_reset_key() overwrites
+        // user_activation_key, so an intercepted-but-unused prior key is
+        // silently invalidated the moment the legitimate user re-requests.
+        // Storage/hashing/expiry are entirely core's (WP core 4.4+/5.7+/6.8+).
+        $key = get_password_reset_key($user);
+        if (is_wp_error($key)) {
+            return;
+        }
 
         $message  = __('Someone requested that the password be reset for the following account:', 'simple-jwt-authentication') . "\r\n\r\n";
         $message .= network_home_url('/') . "\r\n\r\n";
         $message .= sprintf(__('Username: %s', 'simple-jwt-authentication'), $userLogin) . "\r\n\r\n";
+
+        $requestIp = $this->getClientIp();
+        if ($requestIp !== '') {
+            $message .= sprintf(
+                /* translators: %s: IP address */
+                __('This password reset request originated from the IP address %s.', 'simple-jwt-authentication'),
+                $requestIp
+            ) . "\r\n\r\n";
+        }
+
         $message .= __('If this was a mistake, just ignore this email and nothing will happen.', 'simple-jwt-authentication') . "\r\n\r\n";
         $message .= __('To reset your password, visit the following address:', 'simple-jwt-authentication') . "\r\n\r\n";
-        $message .= '<' . network_site_url("wp-login.php?action=rp&key=$key&login=" . rawurlencode($userLogin), 'login') . ">\r\n";
+        $message .= '<' . $this->applyResetUrlFilters(network_site_url("wp-login.php?action=rp&key=$key&login=" . rawurlencode($userLogin), 'login'), $user, $key) . ">\r\n";
 
         $title = sprintf(
             /* translators: %s: site name */
@@ -193,29 +214,170 @@ final class TokenEndpoint
         $title   = apply_filters('retrieve_password_title', $title);
         $message = apply_filters('retrieve_password_message', $message, $key);
 
-        if (!$message || !wp_mail($userEmail, $title, $message)) {
+        if (!$message || !wp_mail($userEmail, $title, $message, ['Content-Type: text/plain; charset=UTF-8'])) {
             return;
         }
 
         $this->tokenService->registerRateLimitHit('password_reset', $window);
     }
 
-    private function generateOrGetResetKey(string $userLogin): string
+    /**
+     * POST /token/resetpassword/complete — set a new password from the emailed reset key.
+     */
+    public function completeResetPassword(WP_REST_Request $request): WP_REST_Response
     {
-        global $wpdb;
+        $key      = (string) $request->get_param('key');
+        $login    = (string) $request->get_param('login');
+        $newPassword = (string) $request->get_param('new_password');
 
-        $key = $wpdb->get_var($wpdb->prepare(
-            "SELECT user_activation_key FROM $wpdb->users WHERE user_login = %s",
-            $userLogin
-        ));
-
-        if (empty($key)) {
-            $key = wp_generate_password(20, false);
-            do_action('retrieve_password_key', $userLogin, $key);
-            $wpdb->update($wpdb->users, ['user_activation_key' => $key], ['user_login' => $userLogin]);
+        if ($key === '' || $login === '') {
+            return $this->errorResponse(
+                'jwt_auth_invalid_key',
+                __('Reset key or login not specified.', 'simple-jwt-authentication'),
+                400
+            );
         }
 
-        return $key;
+        [$maxAttempts, $window] = $this->tokenService->getResetCompleteRateLimit();
+        if ($this->tokenService->isRateLimited('reset_complete', $maxAttempts, $window)) {
+            $response = $this->errorResponse(
+                'jwt_auth_too_many_attempts',
+                __('Too many attempts. Please try again later.', 'simple-jwt-authentication'),
+                429
+            );
+            $response->header('Retry-After', (string) $window);
+
+            return $response;
+        }
+        $this->tokenService->registerRateLimitHit('reset_complete', $window);
+
+        $minLength = (int) apply_filters('jwt_auth_reset_password_min_length', 8, $key, $newPassword);
+        if (mb_strlen($newPassword) < $minLength) {
+            return $this->errorResponse(
+                'jwt_auth_password_too_short',
+                sprintf(
+                    /* translators: %d: minimum password length */
+                    __('Password must be at least %d characters long.', 'simple-jwt-authentication'),
+                    $minLength
+                ),
+                400
+            );
+        }
+
+        // Storage/hashing/expiry are entirely core's (WP 6.8+ hashed keys,
+        // 5.7+ default 24h expiry via the password_reset_expiration filter
+        // registered in the constructor).
+        $user = check_password_reset_key($key, $login);
+
+        if (is_wp_error($user)) {
+            return $this->errorResponse(
+                'jwt_auth_invalid_key',
+                __('The password reset key is invalid or has expired.', 'simple-jwt-authentication'),
+                400
+            );
+        }
+
+        $user = apply_filters('retrieve_password_user', $user, $key);
+        if (is_wp_error($user)) {
+            return $this->errorResponse(
+                'jwt_auth_reset_password_not_allowed',
+                $user->get_error_message(),
+                403
+            );
+        }
+
+        // Atomically consume the key: only one concurrent request can win the
+        // compare-and-clear, closing the race where two requests both pass
+        // check_password_reset_key() before either writes the new password.
+        global $wpdb;
+        $consumed = $wpdb->query($wpdb->prepare(
+            "UPDATE $wpdb->users SET user_activation_key = '' WHERE ID = %d AND user_activation_key = %s",
+            $user->ID,
+            $user->user_activation_key
+        ));
+        if ($consumed !== 1) {
+            return $this->errorResponse(
+                'jwt_auth_invalid_key',
+                __('The password reset key is invalid or has expired.', 'simple-jwt-authentication'),
+                400
+            );
+        }
+
+        if (!wp_set_password($newPassword, $user->ID)) {
+            return $this->errorResponse(
+                'jwt_auth_password_set_failed',
+                __('The new password could not be set.', 'simple-jwt-authentication'),
+                500
+            );
+        }
+
+        // Invalidate every session token issued before the reset.
+        $this->tokenService->revokeAllUserTokens($user->ID);
+
+        do_action('password_reset', $user, $newPassword);
+
+        $this->sendResetConfirmationEmail($user);
+
+        return new WP_REST_Response([
+            'code'    => 'jwt_auth_password_reset_complete',
+            'message' => __('Your password has been reset. You can now sign in with your new password.', 'simple-jwt-authentication'),
+            'data'    => ['status' => 200],
+        ], 200);
+    }
+
+    /**
+     * Notify the user that their password was changed (opt-in; failures ignored).
+     */
+    private function sendResetConfirmationEmail(\WP_User $user): void
+    {
+        if (!apply_filters('jwt_auth_send_reset_confirmation_email', true, $user)) {
+            return;
+        }
+
+        $message = __('Your password was successfully changed on this site:', 'simple-jwt-authentication') . "\r\n\r\n";
+        $message .= network_home_url('/') . "\r\n";
+
+        $title = sprintf(
+            /* translators: %s: site name */
+            __('[%s] Your password has been changed', 'simple-jwt-authentication'),
+            wp_specialchars_decode(get_option('blogname', ''), ENT_QUOTES)
+        );
+
+        $message = apply_filters('jwt_auth_reset_confirmation_message', $message, $user);
+        $title   = apply_filters('jwt_auth_reset_confirmation_title', $title, $user);
+
+        if ($message !== '') {
+            wp_mail($user->user_email, $title, $message, ['Content-Type: text/plain; charset=UTF-8']);
+        }
+    }
+
+    /**
+     * Allow the emailed reset link to be replaced (e.g. a mobile app deep link).
+     *
+     * A configured "Reset URL Template" (see Settings → Simple JWT
+     * Authentication) is applied first and replaces the default
+     * wp-login.php?action=rp link entirely, so app users never land on the
+     * web reset form. The {key} and {login} placeholders are filled in.
+     */
+    private function applyResetUrlFilters(string $url, \WP_User $user, string $key): string
+    {
+        $template = Config::getResetUrlTemplate();
+        if ($template !== null) {
+            $url = strtr($template, [
+                '{key}'   => rawurlencode($key),
+                '{login}' => rawurlencode($user->user_login),
+            ]);
+        }
+
+        $url = apply_filters('jwt_auth_reset_url', $url, $user, $key);
+        $url = apply_filters('lostpassword_url', $url, $key);
+        return $url;
+    }
+
+    private function getClientIp(): string
+    {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+        return is_string($ip) ? $ip : '';
     }
 
     private function errorResponse(string $code, string $message, int $status): WP_REST_Response
@@ -225,5 +387,28 @@ final class TokenEndpoint
             'message' => $message,
             'data'    => ['status' => $status],
         ], $status);
+    }
+
+    /**
+     * Map a TokenService WP_Error (English, untranslated — safe for the
+     * determine_current_user path) into a translated REST error response.
+     */
+    private function errorFromJwt(WP_Error $error): WP_REST_Response
+    {
+        $code   = $error->get_error_code();
+        $status = (int) ($error->get_error_data()['status'] ?? 401);
+
+        $message = match ($code) {
+            'jwt_auth_no_auth_header' => __('Authorization header not found.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_auth_header' => __('Authorization header malformed.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_config' => __('JWT is not configured properly. The key is missing.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_iss' => __('The issuer does not match this server.', 'simple-jwt-authentication'),
+            'jwt_auth_bad_request' => __('User ID not found in the token.', 'simple-jwt-authentication'),
+            'jwt_auth_token_revoked' => __('Token has been revoked.', 'simple-jwt-authentication'),
+            // Exception messages (expired/invalid) stay as-is from firebase/php-jwt.
+            default => $error->get_error_message(),
+        };
+
+        return $this->errorResponse($code, $message, $status);
     }
 }

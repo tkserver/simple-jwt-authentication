@@ -59,6 +59,29 @@ final class SettingsPage
             self::PAGE_SLUG,
             'simple_jwt_auth_section'
         );
+
+        add_settings_section(
+            'simple_jwt_auth_reset_section',
+            __('Password reset (mobile apps)', 'simple-jwt-authentication'),
+            fn() => $this->renderResetSectionDescription(),
+            self::PAGE_SLUG
+        );
+
+        add_settings_field(
+            'reset_url_template',
+            __('Reset URL Template', 'simple-jwt-authentication'),
+            fn() => $this->renderResetUrlTemplateField(),
+            self::PAGE_SLUG,
+            'simple_jwt_auth_reset_section'
+        );
+
+        add_settings_field(
+            'reset_key_max_age_hours',
+            __('Reset Key Max Age (hours)', 'simple-jwt-authentication'),
+            fn() => $this->renderResetKeyMaxAgeField(),
+            self::PAGE_SLUG,
+            'simple_jwt_auth_reset_section'
+        );
     }
 
     private function sanitize(array $input): array
@@ -73,6 +96,17 @@ final class SettingsPage
             $settings['enable_cors'] = (bool) $input['enable_cors'];
         }
 
+        if (isset($input['reset_url_template'])) {
+            // sanitize_text_field is safe here: it strips tags and extra
+            // whitespace but preserves the {key}/{login} placeholders and the
+            // URL characters a deep link template needs.
+            $settings['reset_url_template'] = sanitize_text_field(wp_unslash($input['reset_url_template']));
+        }
+
+        if (isset($input['reset_key_max_age_hours'])) {
+            $settings['reset_key_max_age_hours'] = max(0, (int) $input['reset_key_max_age_hours']);
+        }
+
         Config::flushCache();
         return $settings;
     }
@@ -82,8 +116,10 @@ final class SettingsPage
         echo sprintf(
             /* translators: 1 and 2: wp-config.php code examples */
             __('This is all you need to start using JWT authentication.<br /> You can also specify these in wp-config.php instead using %1$s %2$s', 'simple-jwt-authentication'),
-            "<br /><br /><code>define('SIMPLE_JWT_AUTHENTICATION_SECRET_KEY', 'YOURKEY');</code>",
+            "<br /><br /><code>define('SIMPLE_JWT_AUTHENTICATION_SECRET_KEY', 'YOURKEY');</code>"
+            . "<br /><small>(also accepts legacy <code>JWT_AUTH_SECRET_KEY</code>)</small>",
             "<br /><br /><code>define('SIMPLE_JWT_AUTHENTICATION_CORS_ENABLE', true);</code>"
+            . "<br /><small>(also accepts legacy <code>JWT_AUTH_CORS_ENABLE</code>)</small>"
         );
     }
 
@@ -99,6 +135,29 @@ final class SettingsPage
         $enableCors = Config::isCorsEnabled();
         $isGlobal   = Config::isGlobalDefined(Config::CORS_ENABLE_CONST);
         include __DIR__ . '/Views/Settings/enable-cors.php';
+    }
+
+    private function renderResetSectionDescription(): void
+    {
+        echo sprintf(
+            /* translators: %s: code example of a deep link template */
+            __('For mobile apps, point the emailed reset link at your app instead of the WordPress web reset form. The placeholders %s are filled in with the reset key and username. Leave the template empty to keep the default wp-login.php link.', 'simple-jwt-authentication'),
+            '<code>{key}</code> and <code>{login}</code>'
+        );
+    }
+
+    private function renderResetUrlTemplateField(): void
+    {
+        $template  = (string) (Config::getResetUrlTemplate() ?? '');
+        $isGlobal  = Config::isGlobalDefined(Config::RESET_URL_TEMPLATE_CONST);
+        include __DIR__ . '/Views/Settings/reset-url-template.php';
+    }
+
+    private function renderResetKeyMaxAgeField(): void
+    {
+        $maxAge    = Config::getResetKeyMaxAgeHours();
+        $isGlobal  = Config::isGlobalDefined(Config::RESET_KEY_MAX_AGE_CONST);
+        include __DIR__ . '/Views/Settings/reset-key-max-age.php';
     }
 
     private function renderPage(): void

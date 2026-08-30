@@ -4,7 +4,7 @@ Tags: wp-rest, api, jwt, authentication, access
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.2
-Stable tag: 2.0.1
+Stable tag: 2.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,16 @@ Alternatively, define in `wp-config.php`:
 `define('SIMPLE_JWT_AUTHENTICATION_SECRET_KEY', 'your-key');`
 
 == Changelog ==
+
+= 2.1.1 =
+* Fix: PHP fatal OOM during login/REST auth (determine_current_user infinite loop from __()/locale)
+* Fix: middleware bypass routes work with pretty and ?rest_route= URLs
+* Data: soft-cap concurrent sessions per user (filter jwt_auth_max_tokens_per_user)
+* Compat: accept legacy JWT_AUTH_SECRET_KEY / JWT_AUTH_CORS_ENABLE constants
+
+= 2.1.0 =
+* New: Reset URL Template setting — point the emailed reset link at a mobile app deep link instead of the web reset form
+* New: Reset Key Max Age setting — invalidate/rotate reset keys after N hours (0 = no expiry, core behavior)
 
 = 2.0.1 =
 * Security: password reset endpoint no longer reveals whether an account exists
@@ -56,6 +66,12 @@ Alternatively, define in `wp-config.php`:
 * Initial version
 
 == Upgrade Notice ==
+
+= 2.1.1 =
+* Critical: fixes login/API crash (memory exhausted) caused by JWT auth recursion.
+
+= 2.1.0 =
+* Adds in-app password reset support (deep-link template + key expiry). No action required.
 
 = 2.0.1 =
 * Security hardening: rate limiting, CORS preflight, password-reset response uniformity.

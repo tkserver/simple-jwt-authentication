@@ -21,17 +21,22 @@ final class TokenService
     private const ALGORITHM = 'HS256';
     private const TOKEN_LIFETIME_SECONDS = DAY_IN_SECONDS * 183;
 
+    /** Soft cap on concurrent stored sessions per user (oldest dropped first). */
+    private const MAX_TOKENS_PER_USER = 50;
+
     private const RATE_LIMIT_LOGIN_MAX = 10;
     private const RATE_LIMIT_LOGIN_WINDOW = 15 * MINUTE_IN_SECONDS;
     private const RATE_LIMIT_PASSWORD_RESET_MAX = 5;
     private const RATE_LIMIT_PASSWORD_RESET_WINDOW = 15 * MINUTE_IN_SECONDS;
+    private const RATE_LIMIT_RESET_COMPLETE_MAX = 10;
+    private const RATE_LIMIT_RESET_COMPLETE_WINDOW = 15 * MINUTE_IN_SECONDS;
 
     private ?WP_Error $jwtError = null;
 
     /**
      * Generate a signed JWT for the given user.
      *
-     * @return array{token: string, user_id: int, user_email: string, user_nicename: string, user_display_name: string, token_expires: int}
+     * @return array{token: string, user_id: string, user_email: string, user_nicename: string, user_display_name: string, token_expires: int}
      */
     public function generateToken(WP_User $user): array
     {
@@ -45,6 +50,8 @@ final class TokenService
         $expire    = apply_filters('jwt_auth_expire', $issuedAt + self::TOKEN_LIFETIME_SECONDS, $issuedAt);
         $uuid      = wp_generate_uuid4();
 
+        // Issuer must match tokens already on devices (v1 used get_bloginfo('url')).
+        // Changing this without a filter would mass-revoke every stored mobile session.
         $payload = [
             'uuid'  => $uuid,
             'iss'   => apply_filters('jwt_auth_token_iss', get_bloginfo('url')),
@@ -63,18 +70,30 @@ final class TokenService
 
         $this->storeTokenMetadata($user->ID, $uuid, $issuedAt, $expire);
 
+        // Keep the login JSON shape identical to v1 for the mobile app:
+        // - user_id as a *string* (v1 used $user->data->ID from the DB).
+        //   React Native AsyncStorage.setItem() throws if given a number, which
+        //   crashes the app immediately after a successful login.
+        // - token_expires remains an int (unix timestamp); the app does not
+        //   AsyncStorage it on login.
         return apply_filters('jwt_auth_token_before_dispatch', [
             'token'             => $token,
-            'user_id'           => $user->ID,
-            'user_email'        => $user->user_email,
-            'user_nicename'     => $user->user_nicename,
-            'user_display_name' => $user->display_name,
-            'token_expires'     => $expire,
+            'user_id'           => (string) $user->ID,
+            'user_email'        => (string) $user->user_email,
+            'user_nicename'     => (string) $user->user_nicename,
+            'user_display_name' => (string) $user->display_name,
+            'token_expires'     => (int) $expire,
         ], $user);
     }
 
     /**
      * Validate the Bearer token from the current request.
+     *
+     * IMPORTANT: Error messages here are intentionally NOT passed through __().
+     * This method runs on the `determine_current_user` filter (middleware). Calling
+     * translation APIs can resolve the user locale via wp_get_current_user(), which
+     * re-enters determine_current_user and exhausts memory (infinite recursion).
+     * Translate at the REST response boundary instead (TokenEndpoint).
      *
      * @return \stdClass|WP_Error The decoded token payload, or a WP_Error.
      */
@@ -84,7 +103,7 @@ final class TokenService
         if ($authHeader === null) {
             return new WP_Error(
                 'jwt_auth_no_auth_header',
-                __('Authorization header not found.', 'simple-jwt-authentication'),
+                'Authorization header not found.',
                 ['status' => 401]
             );
         }
@@ -92,7 +111,7 @@ final class TokenService
         if (!preg_match('/^Bearer\s+(\S+)$/', $authHeader, $matches)) {
             return new WP_Error(
                 'jwt_auth_bad_auth_header',
-                __('Authorization header malformed.', 'simple-jwt-authentication'),
+                'Authorization header malformed.',
                 ['status' => 401]
             );
         }
@@ -101,7 +120,7 @@ final class TokenService
         if ($secretKey === null) {
             return new WP_Error(
                 'jwt_auth_bad_config',
-                __('JWT is not configured properly. The key is missing.', 'simple-jwt-authentication'),
+                'JWT is not configured properly. The key is missing.',
                 ['status' => 503]
             );
         }
@@ -121,10 +140,12 @@ final class TokenService
             return new WP_Error('jwt_auth_invalid_token', $e->getMessage(), ['status' => 401]);
         }
 
-        if (!property_exists($token, 'iss') || apply_filters('jwt_auth_token_iss', get_bloginfo('url')) !== $token->iss) {
+        // Must match generateToken / v1: get_bloginfo('url'). Do not call __() here.
+        $expectedIss = apply_filters('jwt_auth_token_iss', get_bloginfo('url'));
+        if (!property_exists($token, 'iss') || $expectedIss !== $token->iss) {
             return new WP_Error(
                 'jwt_auth_bad_iss',
-                __('The issuer does not match this server.', 'simple-jwt-authentication'),
+                'The issuer does not match this server.',
                 ['status' => 403]
             );
         }
@@ -132,18 +153,18 @@ final class TokenService
         if (!isset($token->data->user->id)) {
             return new WP_Error(
                 'jwt_auth_bad_request',
-                __('User ID not found in the token.', 'simple-jwt-authentication'),
+                'User ID not found in the token.',
                 ['status' => 403]
             );
         }
 
         $userId    = (int) $token->data->user->id;
-        $tokenUuid = (string) $token->uuid;
+        $tokenUuid = (string) ($token->uuid ?? '');
 
-        if (!$this->verifyTokenUuid($userId, $tokenUuid, $forMiddleware)) {
+        if ($tokenUuid === '' || !$this->verifyTokenUuid($userId, $tokenUuid, $forMiddleware)) {
             return new WP_Error(
                 'jwt_auth_token_revoked',
-                __('Token has been revoked.', 'simple-jwt-authentication'),
+                'Token has been revoked.',
                 ['status' => 403]
             );
         }
@@ -216,23 +237,35 @@ final class TokenService
             return 0;
         }
 
+        $pruned = [];
         $now      = time();
         $removed  = 0;
-        $filtered = [];
 
         foreach ($tokens as $tokenData) {
             if (($tokenData['expires'] ?? 0) < $now) {
                 $removed++;
             } else {
-                $filtered[] = $tokenData;
+                $pruned[] = $tokenData;
             }
         }
 
         if ($removed > 0) {
-            update_user_meta($userId, 'jwt_data', $filtered);
+            update_user_meta($userId, 'jwt_data', $pruned);
         }
 
         return $removed;
+    }
+
+    /**
+     * Revoke every JWT stored for a user (e.g. after a password reset).
+     *
+     * @return int Number of tokens removed (0 if none were stored).
+     */
+    public function revokeAllUserTokens(int $userId): int
+    {
+        $tokens = get_user_meta($userId, 'jwt_data', true);
+        delete_user_meta($userId, 'jwt_data');
+        return is_array($tokens) ? count($tokens) : 0;
     }
 
     private function getAuthHeader(): ?string
@@ -251,14 +284,31 @@ final class TokenService
             $jwtData = [];
         }
 
+        // Drop expired entries before appending so growth is bounded by active sessions.
+        $now     = time();
+        $jwtData = array_values(array_filter(
+            $jwtData,
+            static fn($row): bool => is_array($row) && (int) ($row['expires'] ?? 0) >= $now
+        ));
+
         $jwtData[] = [
             'uuid'      => $uuid,
             'issued_at' => $issuedAt,
             'expires'   => $expires,
             'ip'        => $this->getClientIp(),
             'ua'        => $_SERVER['HTTP_USER_AGENT'] ?? '',
-            'last_used' => time(),
+            'last_used' => $now,
         ];
+
+        $maxTokens = (int) apply_filters('jwt_auth_max_tokens_per_user', self::MAX_TOKENS_PER_USER);
+        if ($maxTokens > 0 && count($jwtData) > $maxTokens) {
+            // Keep the most recently issued sessions.
+            usort(
+                $jwtData,
+                static fn(array $a, array $b): int => ((int) ($b['issued_at'] ?? 0)) <=> ((int) ($a['issued_at'] ?? 0))
+            );
+            $jwtData = array_slice($jwtData, 0, $maxTokens);
+        }
 
         update_user_meta($userId, 'jwt_data', apply_filters('simple_jwt_auth_save_user_data', $jwtData));
     }
@@ -356,6 +406,17 @@ final class TokenService
         return [max(1, $max), max(10, $window)];
     }
 
+    /**
+     * Reset-complete rate limit: filterable max attempts / window per IP.
+     */
+    public function getResetCompleteRateLimit(): array
+    {
+        $max    = (int) apply_filters('jwt_auth_reset_complete_rate_limit_max', self::RATE_LIMIT_RESET_COMPLETE_MAX);
+        $window = (int) apply_filters('jwt_auth_reset_complete_rate_limit_window', self::RATE_LIMIT_RESET_COMPLETE_WINDOW);
+
+        return [max(1, $max), max(10, $window)];
+    }
+
     private function getRateLimitCount(string $bucket): int
     {
         return (int) get_transient($this->rateLimitKey($bucket));
@@ -368,6 +429,8 @@ final class TokenService
 
     private function getClientIp(): string
     {
-        return $_SERVER['REMOTE_ADDR'] ?? __('Unknown', 'simple-jwt-authentication');
+        // No __() — this runs on the determine_current_user path.
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+        return is_string($ip) && $ip !== '' ? $ip : 'Unknown';
     }
 }

@@ -18,3 +18,4 @@ delete_option('simple_jwt_authentication_settings');
  */
 global $wpdb;
 $wpdb->query("DELETE FROM {$wpdb->usermeta} WHERE meta_key = 'jwt_data'");
+$wpdb->query("DELETE FROM {$wpdb->usermeta} WHERE meta_key = 'jwt_reset_key_created'");

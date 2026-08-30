@@ -4,7 +4,7 @@ Extends the WP REST API using JSON Web Tokens (JWT) as an authentication method,
 
 > **Fork** of [Simple JWT Authentication](https://github.com/jonathan-dejong/simple-jwt-authentication), originally created by Jonathan de Jong.
 
-[Documentation](https://github.com/jonathan-dejong/simple-jwt-authentication/wiki/Documentation)
+[Documentation](https://github.com/jonathan-dejong/simple-jwt-authentication/wiki/Documentation) · [React Native integration guide](docs/react-native-setup.md)
 
 ## Requirements
 
@@ -24,6 +24,8 @@ Either set the secret key in the admin settings page, or in `wp-config.php`:
 ```php
 define('SIMPLE_JWT_AUTHENTICATION_SECRET_KEY', 'your-long-random-string');
 define('SIMPLE_JWT_AUTHENTICATION_CORS_ENABLE', true); // optional
+define('SIMPLE_JWT_AUTHENTICATION_RESET_URL_TEMPLATE', 'myapp://reset-password?key={key}&login={login}'); // optional
+define('SIMPLE_JWT_AUTHENTICATION_RESET_KEY_MAX_AGE', 24); // optional, hours; 0 = no expiry
 ```
 
 ## API Endpoints
@@ -34,6 +36,7 @@ define('SIMPLE_JWT_AUTHENTICATION_CORS_ENABLE', true); // optional
 | POST | `/wp-json/simple-jwt-authentication/v1/token/validate` | Validate a Bearer token |
 | POST | `/wp-json/simple-jwt-authentication/v1/token/revoke` | Revoke the current token |
 | POST | `/wp-json/simple-jwt-authentication/v1/token/resetpassword` | Request a password reset email |
+| POST | `/wp-json/simple-jwt-authentication/v1/token/resetpassword/complete` | Complete a reset with the emailed key + new password |
 
 ## Usage
 
@@ -66,6 +69,32 @@ src/
 Namespace: `SimpleJwtAuth\` (PSR-4, autoloaded via Composer).
 
 ## Changelog
+
+### 2.1.1
+- Fix: PHP fatal OOM (`user.php` / `determine_current_user`) during login and
+  authenticated REST calls. Token validation no longer calls `__()` on the
+  `determine_current_user` filter (locale lookup re-entered the same filter
+  until memory was exhausted). Errors are translated at the REST response
+  boundary instead. Added a re-entry guard around JWT middleware.
+- Fix: auth middleware and bypass routes now recognize both pretty permalinks
+  and `?rest_route=` URLs (Bearer was previously ignored on non-pretty installs).
+- Data: soft-cap concurrent stored sessions per user (default 50, filter
+  `jwt_auth_max_tokens_per_user`); expired entries pruned on login before
+  appending a new token.
+- Compat: honor legacy `JWT_AUTH_SECRET_KEY` / `JWT_AUTH_CORS_ENABLE`
+  wp-config constants in addition to `SIMPLE_JWT_AUTHENTICATION_*`.
+- Compat: login response `user_id` is a string again (v1 shape). A JSON
+  number crashed the React Native app via `AsyncStorage.setItem`.
+
+### 2.1.0
+- New: "Reset URL Template" setting — point the emailed reset link at a
+  mobile app deep link (e.g. `myapp://reset-password?key={key}&login={login}`)
+  instead of the `wp-login.php` web form, so the full reset flow stays in-app
+  (both admin option and `SIMPLE_JWT_AUTHENTICATION_RESET_URL_TEMPLATE` constant)
+- New: "Reset Key Max Age" setting (hours) — reset keys are invalidated and
+  rotated after the window expires (WordPress core keys never expire);
+  0 = no expiry (core behavior)
+- `uninstall.php` also removes the reset-key bookkeeping meta
 
 ### 2.0.1
 - Security: `/token/resetpassword` now returns a single generic response for all

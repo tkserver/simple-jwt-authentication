@@ -14,7 +14,7 @@ use SimpleJwtAuth\Rest\TokenEndpoint;
  */
 final class Plugin
 {
-    public const VERSION = '2.0.1';
+    public const VERSION = '2.1.1';
     public const NAME    = 'simple-jwt-authentication';
 
     private readonly TokenService $tokenService;
