@@ -72,8 +72,15 @@ final class RestController
             'methods'  => 'POST',
             'callback' => fn(WP_REST_Request $request) => $this->endpoint->completeResetPassword($request),
             'args'     => [
-                'key'          => ['required' => true, 'type' => 'string'],
-                'login'        => ['required' => true, 'type' => 'string'],
+                // Provide either `code` (6-digit OTP from email) or `key`
+                // (deep-link / legacy WP reset key). Validated in the callback.
+                // `login` is the plain username/email. `account` is base64(login)
+                // so mobile clients can avoid putting raw emails in the body
+                // (spam filters often 200-HTML-block any POST containing "@").
+                'code'         => ['required' => false, 'type' => 'string'],
+                'key'          => ['required' => false, 'type' => 'string'],
+                'login'        => ['required' => false, 'type' => 'string'],
+                'account'      => ['required' => false, 'type' => 'string'],
                 'new_password' => ['required' => true, 'type' => 'string'],
             ],
         ]);

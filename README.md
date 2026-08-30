@@ -24,7 +24,11 @@ Either set the secret key in the admin settings page, or in `wp-config.php`:
 ```php
 define('SIMPLE_JWT_AUTHENTICATION_SECRET_KEY', 'your-long-random-string');
 define('SIMPLE_JWT_AUTHENTICATION_CORS_ENABLE', true); // optional
-define('SIMPLE_JWT_AUTHENTICATION_RESET_URL_TEMPLATE', 'myapp://reset-password?key={key}&login={login}'); // optional
+define('SIMPLE_JWT_AUTHENTICATION_RESET_URL_TEMPLATE', 'myapp://reset-password?key={key}&login={login}'); // optional deep-link fallback
+
+// Password reset emails include a 6-digit OTP (primary). Complete with:
+//   POST .../token/resetpassword/complete  code=######&login=...&new_password=...
+// Legacy key= still accepted for deep links / web.
 define('SIMPLE_JWT_AUTHENTICATION_RESET_KEY_MAX_AGE', 24); // optional, hours; 0 = no expiry
 ```
 
