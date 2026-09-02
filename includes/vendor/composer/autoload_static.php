@@ -38,6 +38,14 @@ class ComposerStaticInit89ab54d4543c163039c2cf5235fd7e1a
         'Firebase\\JWT\\JWTExceptionWithPayloadInterface' => __DIR__ . '/..' . '/firebase/php-jwt/src/JWTExceptionWithPayloadInterface.php',
         'Firebase\\JWT\\Key' => __DIR__ . '/..' . '/firebase/php-jwt/src/Key.php',
         'Firebase\\JWT\\SignatureInvalidException' => __DIR__ . '/..' . '/firebase/php-jwt/src/SignatureInvalidException.php',
+        'SimpleJwtAuth\\Admin\\ProfileTokens' => __DIR__ . '/../../..' . '/src/Admin/ProfileTokens.php',
+        'SimpleJwtAuth\\Admin\\SettingsPage' => __DIR__ . '/../../..' . '/src/Admin/SettingsPage.php',
+        'SimpleJwtAuth\\Config' => __DIR__ . '/../../..' . '/src/Config.php',
+        'SimpleJwtAuth\\PasswordResetCode' => __DIR__ . '/../../..' . '/src/PasswordResetCode.php',
+        'SimpleJwtAuth\\Plugin' => __DIR__ . '/../../..' . '/src/Plugin.php',
+        'SimpleJwtAuth\\Rest\\RestController' => __DIR__ . '/../../..' . '/src/Rest/RestController.php',
+        'SimpleJwtAuth\\Rest\\TokenEndpoint' => __DIR__ . '/../../..' . '/src/Rest/TokenEndpoint.php',
+        'SimpleJwtAuth\\TokenService' => __DIR__ . '/../../..' . '/src/TokenService.php',
     );
 
     public static function getInitializer(ClassLoader $loader)

@@ -1,9 +1,9 @@
 <?php return array(
     'root' => array(
-        'name' => 'jonathan-dejong/simple-jwt-authentication',
+        'name' => 'tkserver/simple-jwt-authentication',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => '31d54a43c6a76991c874ec351a4b0524945ca525',
+        'reference' => '579d6b9cf4a5af1c7770dd12d55e59f3c7a23726',
         'type' => 'wordpress-plugin',
         'install_path' => __DIR__ . '/../../../',
         'aliases' => array(),
@@ -19,10 +19,10 @@
             'aliases' => array(),
             'dev_requirement' => false,
         ),
-        'jonathan-dejong/simple-jwt-authentication' => array(
+        'tkserver/simple-jwt-authentication' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => '31d54a43c6a76991c874ec351a4b0524945ca525',
+            'reference' => '579d6b9cf4a5af1c7770dd12d55e59f3c7a23726',
             'type' => 'wordpress-plugin',
             'install_path' => __DIR__ . '/../../../',
             'aliases' => array(),

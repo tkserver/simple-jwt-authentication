@@ -24,7 +24,7 @@ jobs:
       - name: Validate composer files
         run: |
           composer validate composer.json
-          composer validate --working-directory=tests tests/composer.json
+          (cd tests && composer validate composer.json)
 
       - name: Install test dependencies
         run: cd tests && composer install --no-interaction --prefer-dist --no-progress

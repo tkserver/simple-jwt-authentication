@@ -15,4 +15,12 @@ return array(
     'Firebase\\JWT\\JWTExceptionWithPayloadInterface' => $vendorDir . '/firebase/php-jwt/src/JWTExceptionWithPayloadInterface.php',
     'Firebase\\JWT\\Key' => $vendorDir . '/firebase/php-jwt/src/Key.php',
     'Firebase\\JWT\\SignatureInvalidException' => $vendorDir . '/firebase/php-jwt/src/SignatureInvalidException.php',
+    'SimpleJwtAuth\\Admin\\ProfileTokens' => $baseDir . '/src/Admin/ProfileTokens.php',
+    'SimpleJwtAuth\\Admin\\SettingsPage' => $baseDir . '/src/Admin/SettingsPage.php',
+    'SimpleJwtAuth\\Config' => $baseDir . '/src/Config.php',
+    'SimpleJwtAuth\\PasswordResetCode' => $baseDir . '/src/PasswordResetCode.php',
+    'SimpleJwtAuth\\Plugin' => $baseDir . '/src/Plugin.php',
+    'SimpleJwtAuth\\Rest\\RestController' => $baseDir . '/src/Rest/RestController.php',
+    'SimpleJwtAuth\\Rest\\TokenEndpoint' => $baseDir . '/src/Rest/TokenEndpoint.php',
+    'SimpleJwtAuth\\TokenService' => $baseDir . '/src/TokenService.php',
 );
