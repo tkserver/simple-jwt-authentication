@@ -84,7 +84,11 @@ Security/robustness fixes found during project analysis.
 
 ## Deferred
 
-- [ ] Automated test suite (PHPUnit) — out of scope for this pass; `.gitignore` already
-  anticipates it.
+- [x] Automated test suite (PHPUnit) — **done (2026-09-01)**: `tests/` with a
+  pure-PHP unit suite (`tests/Unit/`) and a WP-shim endpoint suite
+  (`tests/WP/`); 188 tests / 399 assertions, green. Run with
+  `cd tests && composer test` (or `tests/run.sh`); CI:
+  `.github/workflows/phpunit.yml` (PHP 8.2/8.3 matrix). Full breakdown and
+  decisions: `TEST-SUITE-TASKS.md`.
 - [ ] Optional: IP-based client IP behind proxy (`X-Forwarded-For`) — intentionally not
   trusted by default.

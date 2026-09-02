@@ -1,0 +1,22 @@
+{
+    "name": "tkserver/simple-jwt-authentication-tests",
+    "description": "Dev/test harness for Simple JWT Authentication. Kept separate from the root composer.json so PHPUnit and other dev-only packages never land in the shipped includes/vendor bundle (which is committed to git).",
+    "license": "GPL-2.0-or-later",
+    "require-dev": {
+        "phpunit/phpunit": "^10.5 || ^11"
+    },
+    "autoload": {
+        "psr-4": {
+            "SimpleJwtAuth\\Tests\\": "."
+        }
+    },
+    "scripts": {
+        "test": "phpunit --testdox -c ../phpunit.xml.dist",
+        "test:unit": "phpunit --testdox -c ../phpunit.xml.dist --testsuite unit"
+    },
+    "minimum-stability": "stable",
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

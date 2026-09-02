@@ -1,0 +1,41 @@
+name: PHPUnit
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: 'composer:v2'
+
+      - name: Validate composer files
+        run: |
+          composer validate composer.json
+          composer validate --working-directory=tests tests/composer.json
+
+      - name: Install test dependencies
+        run: cd tests && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run test suite (unit + wp)
+        run: cd tests && vendor/bin/phpunit --testdox -c ../phpunit.xml.dist
+
+      - name: Assert shipped vendor untouched by dev deps
+        run: |
+          if [ -n "$(git status --porcelain includes/vendor)" ]; then
+            echo "::error::dev dependencies leaked into includes/vendor"
+            git status --porcelain includes/vendor
+            exit 1
+          fi

@@ -72,7 +72,39 @@ src/
 
 Namespace: `SimpleJwtAuth\` (PSR-4, autoloaded via Composer).
 
+## Development / Testing
+
+The plugin ships an automated test suite (PHPUnit 11). Development
+dependencies are isolated in `tests/` and are **never** installed into the
+shipped `includes/vendor` directory.
+
+```bash
+cd tests
+composer install     # installs PHPUnit into tests/vendor (gitignored)
+composer test        # runs both suites: unit (tests/Unit) + wp (tests/WP)
+composer test:unit   # unit suite only
+# or, from the repo root: tests/run.sh
+```
+
+- `tests/Unit/` — pure-PHP tests that exercise `src/` directly (Config,
+  TokenService, PasswordResetCode, RestController middleware), run
+  process-isolated so test-defined WP constants can't leak between tests.
+- `tests/WP/` — endpoint tests against a small WP shim
+  (`tests/WP/shim-functions.php`) standing in for the ~25 WP functions and
+  classes the plugin touches. Test-only; never autoloaded in production.
+- Config lives in `phpunit.xml.dist`; caches/artifacts land in
+  `tests/artifacts/` (gitignored).
+- CI: `.github/workflows/phpunit.yml` (PHP 8.2/8.3 matrix) runs the suite and
+  asserts dev dependencies never leak into `includes/vendor`.
+
 ## Changelog
+
+### 2.2.1
+- Maintenance release (version bump; changelog entries for the 2.2.x line
+  were not recorded in this file).
+- Test suite: automated PHPUnit suite added under `tests/` (see
+  "Development / Testing") — pure-PHP unit tests plus a WP-shim endpoint
+  suite; development dependencies stay out of the shipped `includes/vendor`.
 
 ### 2.1.1
 - Fix: PHP fatal OOM (`user.php` / `determine_current_user`) during login and

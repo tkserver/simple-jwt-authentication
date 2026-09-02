@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Test configuration for Simple JWT Authentication.
+
+  Two suites:
+    * unit  — tests/Unit — pure-PHP tests, no WordPress required
+    * wp    — tests/WP   — tests running against the shim layer (Phase 2 of
+              TEST-SUITE-TASKS.md); empty until then
+
+  Run from repo root (via the harness in tests/composer.json):
+      cd tests && composer test          # both suites
+      cd tests && composer test:unit     # unit only
+  Or directly:
+      tests/vendor/bin/phpunit -c phpunit.xml.dist - testsuite unit
+-->
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/test-configuration/phpunit-11.xsd"
+    bootstrap="tests/bootstrap.php"
+    cacheDirectory="tests/artifacts"
+    colors="true"
+    processIsolation="true"
+    failOnDeprecation="true"
+    failOnWarning="true"
+    failOnRisky="true"
+>
+
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="wp">
+            <directory>tests/WP</directory>
+        </testsuite>
+    </testsuites>
+
+    <!-- Production code measured for coverage / deprecation notices -->
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+</phpunit>

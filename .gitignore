@@ -30,3 +30,6 @@ wp-config.local.php
 
 # Logs
 *.log
+
+# Test artifacts (result cache etc.)
+tests/artifacts/
